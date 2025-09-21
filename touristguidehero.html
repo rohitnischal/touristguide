@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Tourist Safety System</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Libraries -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
+
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; }
+    h2 { margin-top: 0; }
+    section { background: white; margin: 20px auto; padding: 20px; border-radius: 10px; width: 90%; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    label { display:block; margin-top:10px; }
+    input, button { padding: 8px; margin-top: 6px; width: 100%; }
+    button { cursor: pointer; border: none; border-radius: 6px; font-weight: bold; }
+    .btn-primary { background:#1e88e5; color:white; }
+    .btn-danger { background:#e53935; color:white; }
+    .btn-success { background:#43a047; color:white; }
+    #map, #authMap { height: 250px; border-radius: 8px; margin-top: 10px; }
+    table { width:100%; border-collapse: collapse; margin-top:10px; }
+    th,td { border:1px solid #ddd; padding:8px; text-align:center; font-size:14px; }
+    th { background:#1e88e5; color:white; }
+    .ledger { background:#f1f9ff; padding:10px; border-radius:6px; font-family:monospace; }
+    .notification { margin-top:8px; background:#fff3cd; padding:10px; border-left:4px solid #ff9800; border-radius:6px; }
+  </style>
+</head>
+<body>
+
+<h1 style="text-align:center; background:#1e88e5; color:white; padding:15px;">🌍 Smart Tourist Safety System</h1>
+
+<div id="map"></div>
+
+<!-- Step 1 -->
+<section>
+  <h2>Step 1 – Digital ID & Health Card</h2>
+  <form id="regForm">
+    <label>Name: <input type="text" id="name" required></label>
+    <label>Passport/ID: <input type="text" id="pid" required></label>
+    <label>Country: <input type="text" id="country" required></label>
+    <label>Email (for E-FIR): <input type="email" id="email" required></label>
+    <label>Blood Group / Allergies: <input type="text" id="health"></label>
+    <button type="submit" class="btn-primary">Generate Blockchain ID</button>
+  </form>
+  <p><strong>Blockchain ID:</strong> <span id="blockchainId">—</span></p>
+  <div id="qrcode"></div>
+  <p><strong>Health Card:</strong> <span id="healthCard">—</span></p>
+</section>
+
+<!-- Step 2 -->
+<section>
+  <h2>Step 2 – Tourist App</h2>
+  <p>Safety Score: <span id="safetyScore">100</span></p>
+  <button class="btn-danger" onclick="createIncident('panic')">🚨 Panic Button</button>
+</section>
+
+<!-- Step 3 -->
+<section>
+  <h2>Step 3 – AI Detection</h2>
+  <p>Status: <span id="status">Active</span></p>
+  <button class="btn-primary" onclick="startInactivity()">Start Inactivity Monitor</button>
+  <button class="btn-success" onclick="stopInactivity()">Stop</button>
+</section>
+
+<!-- Step 4 -->
+<section>
+  <h2>Step 4 – Authority Dashboard</h2>
+  <div id="authMap"></div>
+  <table id="incidentTable">
+    <tr><th>ID</th><th>Type</th><th>Location</th><th>TX Hash</th></tr>
+  </table>
+  <button class="btn-primary" onclick="generateAllFIR()">📄 Auto E-FIR (PDF + Email)</button>
+</section>
+
+<!-- Step 5 -->
+<section>
+  <h2>Step 5 – Notifications</h2>
+  <div id="notifications"></div>
+</section>
+
+<!-- Step 6 -->
+<section>
+  <h2>Step 6 – Blockchain Audit Trail</h2>
+  <div class="ledger" id="ledger"></div>
+</section>
+
+<script>
+/* Replace with your EmailJS keys */
+const EMAILJS_USER = "YOUR_EMAILJS_USER_ID";
+const EMAILJS_SERVICE = "YOUR_SERVICE_ID";
+const EMAILJS_TEMPLATE = "YOUR_TEMPLATE_ID";
+if(window.emailjs && EMAILJS_USER !== "YOUR_EMAILJS_USER_ID"){ emailjs.init(EMAILJS_USER); }
+
+let currentId = null;
+let map, marker, authMap, authMarker;
+let incidents = [];
+let ledger = [];
+let inactivityTimer = null;
+
+// SHA-256
+async function sha256(str){
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+// Step 1
+document.getElementById("regForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const name=document.getElementById("name").value.trim();
+  const pid=document.getElementById("pid").value.trim();
+  const country=document.getElementById("country").value.trim();
+  const email=document.getElementById("email").value.trim();
+  const health=document.getElementById("health").value.trim();
+
+  const hash=await sha256(name+pid+country+email+health);
+  const id=hash.slice(0,16);
+  currentId={id,name,pid,country,email,health};
+  document.getElementById("blockchainId").innerText=id;
+  document.getElementById("healthCard").innerText=health||"—";
+  document.getElementById("qrcode").innerHTML="";
+  new QRCode(document.getElementById("qrcode"), JSON.stringify(currentId));
+});
+
+// Map
+map = L.map("map").setView([28.61,77.23], 5);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+marker = L.marker([28.61,77.23]).addTo(map);
+
+authMap = L.map("authMap").setView([28.61,77.23], 5);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(authMap);
+authMarker = L.marker([28.61,77.23]).addTo(authMap);
+
+if(navigator.geolocation){
+  navigator.geolocation.watchPosition(pos=>{
+    const lat=pos.coords.latitude, lng=pos.coords.longitude;
+    marker.setLatLng([lat,lng]); map.setView([lat,lng], 12);
+    authMarker.setLatLng([lat,lng]); authMap.setView([lat,lng], 12);
+  });
+}
+
+// Incidents
+async function createIncident(type){
+  const latlng=marker.getLatLng();
+  const id="INC"+(incidents.length+1);
+  const hash=await sha256(id+type+Date.now());
+  const tx="0x"+hash.slice(0,12);
+  const inc={id,type,lat:latlng.lat,lng:latlng.lng,hash,tx};
+  incidents.push(inc);
+  ledger.unshift(tx);
+
+  // Update table
+  document.getElementById("incidentTable").insertAdjacentHTML("beforeend",
+    `<tr><td>${id}</td><td>${type}</td><td>${latlng.lat.toFixed(3)},${latlng.lng.toFixed(3)}</td><td>${tx}</td></tr>`);
+  document.getElementById("ledger").innerText=ledger.join("\n");
+
+  // Notify
+  document.getElementById("notifications").insertAdjacentHTML("afterbegin",
+    `<div class="notification">🚨 ${type} reported at ${latlng.lat.toFixed(3)},${latlng.lng.toFixed(3)}</div>`);
+}
+
+// Inactivity
+function startInactivity(){
+  if(inactivityTimer) return;
+  inactivityTimer=setInterval(()=>createIncident("inactivity"),30000);
+  document.getElementById("status").innerText="Monitoring inactivity…";
+}
+function stopInactivity(){
+  clearInterval(inactivityTimer); inactivityTimer=null;
+  document.getElementById("status").innerText="Stopped";
+}
+
+// Generate E-FIR
+function generateAllFIR(){
+  if(incidents.length===0){ alert("No incidents yet"); return; }
+  const { jsPDF } = window.jspdf;
+  const doc=new jsPDF();
+  doc.text("Auto E-FIR Report",20,20);
+  doc.text("Tourist ID: "+(currentId?.id||"N/A"),20,30);
+  incidents.forEach((i,idx)=>{
+    doc.text(`#${i.id} - ${i.type} at ${i.lat.toFixed(3)},${i.lng.toFixed(3)} TX:${i.tx}`,20,50+idx*10);
+  });
+  doc.save("EFIR.pdf");
+
+  if(window.emailjs && EMAILJS_USER!=="YOUR_EMAILJS_USER_ID"){
+    emailjs.send(EMAILJS_SERVICE, EMAILJS_TEMPLATE, {
+      to_email: currentId?.email||document.getElementById("email").value,
+      message: JSON.stringify(incidents,null,2)
+    }).then(()=>alert("✅ E-FIR sent to your email!"),err=>alert("❌ Email failed: "+err));
+  }else{
+    alert("EmailJS not configured. PDF downloaded locally.");
+  }
+}
+</script>
+</body>
+</html>
+
+
